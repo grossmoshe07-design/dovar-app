@@ -21,74 +21,88 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Java
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Ensure sdkmanager is available and install SDK components
+      # Install the REAL commandline-tools (fixes sdkmanager)
+      - name: Install Android SDK + Required Packages
         run: |
-          export PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/cmdline-tools/bin"
-          if ! command -v sdkmanager >/dev/null 2>&1; then
-            echo "sdkmanager not found — listing $ANDROID_SDK_ROOT for debugging"
-            ls -la $ANDROID_SDK_ROOT || true
-          fi
-          yes | sdkmanager --licenses || true
-          sdkmanager --update || true
-          sdkmanager "platform-tools" "platforms;android-${{ env.ANDROID_API_LEVEL }}" "build-tools;${{ env.BUILD_TOOLS_VERSION }}" || true
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          cd "$ANDROID_SDK_ROOT/cmdline-tools"
+          
+          # Download Google commandline tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O clt.zip
+          unzip -q clt.zip
+          mv cmdline-tools latest
+          rm clt.zip
 
-      - name: Make gradlew executable (if present)
+          # Add to PATH
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+
+          # Accept all licenses NON-interactively
+          yes | sdkmanager --licenses
+
+          # Install only required components (no emulator, no XR/TV junk)
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-${ANDROID_API_LEVEL}" \
+            "build-tools;${BUILD_TOOLS_VERSION}"
+
+      # Make gradlew executable if exists
+      - name: Make gradlew executable
         run: |
           if [ -f ./gradlew ]; then
             chmod +x ./gradlew
-          else
-            echo "gradlew not found in repo; will use fallback Gradle distribution"
           fi
 
-      - name: Build (use gradlew if present; otherwise download Gradle and use it)
+      # Build the APK using gradlew or a fallback Gradle
+      - name: Build APK
         run: |
-          set -e
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          
           if [ -x ./gradlew ]; then
-            echo "Using repository gradlew"
             ./gradlew assembleRelease --no-daemon
           else
             GRADLE_VER="${FALLBACK_GRADLE_VERSION}"
-            DIST="gradle-${GRADLE_VER}-bin.zip"
-            URL="https://services.gradle.org/distributions/${DIST}"
-            mkdir -p /tmp/gradle-dist
-            echo "Downloading $URL"
-            curl -sSL "$URL" -o /tmp/gradle-dist/$DIST
-            unzip -q /tmp/gradle-dist/$DIST -d /tmp/gradle-dist
-            /tmp/gradle-dist/gradle-${GRADLE_VER}/bin/gradle --no-daemon assembleRelease
+            DIST="gradle-$GRADLE_VER-bin.zip"
+            URL="https://services.gradle.org/distributions/$DIST"
+
+            mkdir -p /tmp/gradle
+            curl -sSL "$URL" -o /tmp/gradle/$DIST
+            unzip -q /tmp/gradle/$DIST -d /tmp/gradle
+
+            /tmp/gradle/gradle-$GRADLE_VER/bin/gradle assembleRelease --no-daemon
           fi
 
+      # Find APK output
       - name: Locate APK
         id: find_apk
         run: |
-          echo "Looking for APK..."
-          ls -la app/build/outputs/apk || true
-          APK=$(find app/build/outputs/apk -type f -name "*release*.apk" | head -n 1 || true)
+          APK=$(find . -type f -name "*release*.apk" | head -n 1)
           if [ -z "$APK" ]; then
-            APK=$(find app/build/outputs -type f -name "*.apk" | head -n 1 || true)
-          fi
-          if [ -z "$APK" ]; then
-            echo "ERROR: No APK produced by the build."
+            echo "No APK found!"
             exit 1
           fi
-          echo "Found APK: $APK"
           echo "apk=$APK" >> $GITHUB_OUTPUT
+          echo "Found APK: $APK"
 
+      # Upload as artifact
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: dovar-apk
           path: ${{ steps.find_apk.outputs.apk }}
 
-      - name: Attach APK to GitHub Release (only on release)
+      # Attach to GitHub Release (only for release trigger)
+      - name: Attach APK to GitHub Release
         if: ${{ github.event_name == 'release' }}
         uses: softprops/action-gh-release@v1
         with:
