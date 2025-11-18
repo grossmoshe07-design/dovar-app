@@ -10,7 +10,6 @@ env:
   ANDROID_API_LEVEL: '34'
   BUILD_TOOLS_VERSION: '34.0.0'
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-  FALLBACK_GRADLE_VERSION: '8.4.1'
 
 permissions:
   contents: read
@@ -32,57 +31,45 @@ jobs:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      # Install the REAL commandline-tools (fixes sdkmanager)
+      # Android SDK (proper installation)
       - name: Install Android SDK + Required Packages
         run: |
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           cd "$ANDROID_SDK_ROOT/cmdline-tools"
-          
-          # Download Google commandline tools
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O clt.zip
-          unzip -q clt.zip
-          mv cmdline-tools latest
-          rm clt.zip
 
-          # Add to PATH
+          # install Google cmdline tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+          unzip -q tools.zip
+          mv cmdline-tools latest
+          rm tools.zip
+
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
 
-          # Accept all licenses NON-interactively
           yes | sdkmanager --licenses
 
-          # Install only required components (no emulator, no XR/TV junk)
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-${ANDROID_API_LEVEL}" \
             "build-tools;${BUILD_TOOLS_VERSION}"
 
-      # Make gradlew executable if exists
-      - name: Make gradlew executable
-        run: |
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-          fi
+      # Use official Gradle setup
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
-      # Build the APK using gradlew or a fallback Gradle
+      # Build APK using gradlew
       - name: Build APK
         run: |
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          
-          if [ -x ./gradlew ]; then
-            ./gradlew assembleRelease --no-daemon
-          else
-            GRADLE_VER="${FALLBACK_GRADLE_VERSION}"
-            DIST="gradle-$GRADLE_VER-bin.zip"
-            URL="https://services.gradle.org/distributions/$DIST"
 
-            mkdir -p /tmp/gradle
-            curl -sSL "$URL" -o /tmp/gradle/$DIST
-            unzip -q /tmp/gradle/$DIST -d /tmp/gradle
-
-            /tmp/gradle/gradle-$GRADLE_VER/bin/gradle assembleRelease --no-daemon
+          if [ ! -x ./gradlew ]; then
+            echo "ERROR: gradlew not found! Please commit your Gradle wrapper."
+            exit 1
           fi
 
-      # Find APK output
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      # Find APK
       - name: Locate APK
         id: find_apk
         run: |
@@ -94,14 +81,14 @@ jobs:
           echo "apk=$APK" >> $GITHUB_OUTPUT
           echo "Found APK: $APK"
 
-      # Upload as artifact
-      - name: Upload APK as workflow artifact
+      # Upload artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: dovar-apk
           path: ${{ steps.find_apk.outputs.apk }}
 
-      # Attach to GitHub Release (only for release trigger)
+      # Attach to release
       - name: Attach APK to GitHub Release
         if: ${{ github.event_name == 'release' }}
         uses: softprops/action-gh-release@v1
