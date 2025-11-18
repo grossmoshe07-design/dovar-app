@@ -1,2 +1,18 @@
-rootProject.name = "dovar-app"
-include(":app")
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+        mavenCentral()
+    }
+}
+dependencyResolutionManagement {
+    // Fail if a subproject tries to declare its own repositories (avoid repo mismatch)
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "dovar-app" // keep your existing root project name
+include ':app' // adjust if your app module has different name(s)
