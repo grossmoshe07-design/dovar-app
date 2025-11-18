@@ -20,24 +20,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout
+      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Java
+      # 2. Setup JDK
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      # Android SDK (proper installation)
+      # 3. Install Android SDK + Required Packages
       - name: Install Android SDK + Required Packages
         run: |
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           cd "$ANDROID_SDK_ROOT/cmdline-tools"
 
-          # install Google cmdline tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
           unzip -q tools.zip
           mv cmdline-tools latest
@@ -52,16 +51,16 @@ jobs:
             "platforms;android-${ANDROID_API_LEVEL}" \
             "build-tools;${BUILD_TOOLS_VERSION}"
 
-      # Use official Gradle setup
+      # 4. Setup Gradle (optional, we are using wrapper)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # Build APK using gradlew
+      # 5. Make gradlew executable & build APK
       - name: Build APK
         run: |
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
 
-          if [ ! -x ./gradlew ]; then
+          if [ ! -f ./gradlew ]; then
             echo "ERROR: gradlew not found! Please commit your Gradle wrapper."
             exit 1
           fi
@@ -69,7 +68,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon
 
-      # Find APK
+      # 6. Locate APK
       - name: Locate APK
         id: find_apk
         run: |
@@ -81,14 +80,14 @@ jobs:
           echo "apk=$APK" >> $GITHUB_OUTPUT
           echo "Found APK: $APK"
 
-      # Upload artifact
+      # 7. Upload APK as artifact
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: dovar-apk
           path: ${{ steps.find_apk.outputs.apk }}
 
-      # Attach to release
+      # 8. Attach APK to GitHub Release
       - name: Attach APK to GitHub Release
         if: ${{ github.event_name == 'release' }}
         uses: softprops/action-gh-release@v1
