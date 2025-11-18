@@ -2,7 +2,8 @@ name: Build Release APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 env:
@@ -15,6 +16,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    name: Build release APK
 
     steps:
       - name: Checkout repository
@@ -40,9 +42,10 @@ jobs:
           emulator: false
 
       - name: Accept Android SDK licenses
-        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
 
-      - name: Force google() + mavenCentral() on runner (CI safety)
+      - name: Ensure runner Gradle repos (CI safety)
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'INIT'
@@ -61,86 +64,82 @@ INIT
           fi
           grep -qxF "android.useAndroidX=true" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
           grep -qxF "android.enableJetifier=true" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
-          echo "AndroidX flags ensured."
+          echo "Ensured AndroidX flags."
 
-      - name: Prepare Gradle command (use wrapper if valid, otherwise download distribution)
-        id: prepare
+      - name: Prepare Gradle command (use valid wrapper or download distribution)
+        id: prepare-gradle
         run: |
           set -euo pipefail
 
-          # prefer a valid project wrapper
+          # prefer a valid project wrapper if present
           if [ -f "./gradlew" ]; then
-            echo "Found ./gradlew"
+            echo "Found project gradlew"
             chmod +x ./gradlew || true
+
             if [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
               if unzip -p ./gradle/wrapper/gradle-wrapper.jar META-INF/MANIFEST.MF 2>/dev/null | grep -q "GradleWrapperMain"; then
                 echo "Using project wrapper ./gradlew"
                 echo "GRADLE_CMD=./gradlew" >> $GITHUB_ENV
                 exit 0
               else
-                echo "Project wrapper JAR present but invalid. Will download Gradle distribution."
+                echo "gradle-wrapper.jar present but invalid — will download distribution."
               fi
             else
-              echo "gradle-wrapper.jar not found; will download Gradle distribution."
+              echo "gradle-wrapper.jar not found under gradle/wrapper — will download distribution."
             fi
           else
-            echo "No ./gradlew in repo; will download Gradle distribution."
+            echo "No ./gradlew script found — will download Gradle distribution."
           fi
 
-          # clean leftovers from previous runs (safe)
+          # clean previous leftovers
           rm -rf gradle gradle-* gradle.zip || true
 
-          # download gradle zip
+          # download Gradle distribution
           echo "Downloading Gradle ${GRADLE_VERSION}..."
           curl -sLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
           if [ ! -f gradle.zip ]; then
-            echo "ERROR: gradle.zip not downloaded"
+            echo "ERROR: gradle.zip was not downloaded"
             exit 1
           fi
 
-          # unzip and detect extracted directory name robustly
+          # unzip and detect extracted folder
           unzip -q gradle.zip
-          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "gradle-*" -print | head -n 1 || true)
-          if [ -z "$EXTRACTED_DIR" ]; then
-            echo "ERROR: could not find extracted gradle directory"
+          EXTRACTED_DIR=$(ls -d gradle-* 2>/dev/null | head -n 1 || true)
+          if [ -z "${EXTRACTED_DIR}" ]; then
+            echo "ERROR: could not detect extracted gradle directory"
             ls -la
             exit 1
           fi
-          echo "Extracted Gradle folder: $EXTRACTED_DIR"
 
-          # move it to ./gradle (so path is predictable)
-          mv "$EXTRACTED_DIR" gradle
-
-          # ensure gradle executable exists
+          mv "${EXTRACTED_DIR}" gradle
           if [ ! -f "gradle/bin/gradle" ]; then
-            echo "ERROR: gradle/bin/gradle not found inside downloaded distribution!"
+            echo "ERROR: gradle/bin/gradle missing in downloaded distribution"
             ls -la gradle || true
             exit 1
           fi
+
           chmod +x gradle/bin/gradle || true
-
-          # export explicit gradle command so we avoid any runner-installed gradle
           echo "GRADLE_CMD=./gradle/bin/gradle" >> $GITHUB_ENV
-          echo "Downloaded Gradle and set GRADLE_CMD=./gradle/bin/gradle"
+          echo "Downloaded Gradle and set GRADLE_CMD."
 
-      - name: Show chosen Gradle & version
+      - name: Show chosen Gradle (debug)
         run: |
-          echo "Using GRADLE_CMD=${GRADLE_CMD:-<not-set>}"
+          echo "GRADLE_CMD=${GRADLE_CMD:-<not-set>}"
           if [ -n "${GRADLE_CMD:-}" ]; then
-            $GRADLE_CMD --version || true
+            ${GRADLE_CMD} --version || true
           fi
 
       - name: Build Release APK
         run: |
           set -euo pipefail
           if [ -n "${GRADLE_CMD:-}" ] && [ "${GRADLE_CMD}" = "./gradlew" ]; then
-            echo "Running project wrapper: ./gradlew assembleRelease"
+            echo "Using project wrapper: ./gradlew assembleRelease"
             ./gradlew assembleRelease --no-daemon
           elif [ -n "${GRADLE_CMD:-}" ]; then
-            echo "Running downloaded Gradle: ${GRADLE_CMD} assembleRelease"
+            echo "Using downloaded Gradle: ${GRADLE_CMD} assembleRelease"
             ${GRADLE_CMD} assembleRelease --no-daemon
           else
-            echo "ERROR: no Gradle command available"
+            echo "ERROR: no gradle command available"
             exit 1
           fi
 
