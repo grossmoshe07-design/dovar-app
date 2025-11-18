@@ -34,13 +34,12 @@ jobs:
           api-level: ${{ env.ANDROID_API_LEVEL }}
           build-tools: ${{ env.BUILD_TOOLS_VERSION }}
 
-      - name: Download Gradle Wrapper
+      - name: Download Gradle
         run: |
           curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${{ env.GRADLE_VERSION }}-bin.zip
           unzip -q gradle.zip
-          mv gradle-${{ env.GRADLE_VERSION }} gradle
-          chmod +x gradle/bin/gradle
-          echo "$PWD/gradle/bin" >> $GITHUB_PATH
+          echo "$PWD/gradle-${{ env.GRADLE_VERSION }}/bin" >> $GITHUB_PATH
+
 
       - name: Build release APK
         run: gradle assembleRelease --no-daemon
