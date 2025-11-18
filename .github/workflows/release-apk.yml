@@ -47,12 +47,7 @@ jobs:
 
       - name: Ensure AndroidX flags in gradle.properties
         run: |
-          # create file if not exists
-          if [ ! -f gradle.properties ]; then
-            touch gradle.properties
-          fi
-
-          # Add flags only if not already present
+          if [ ! -f gradle.properties ]; then touch gradle.properties; fi
           grep -qxF "android.useAndroidX=true" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
           grep -qxF "android.enableJetifier=true" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
 
@@ -61,93 +56,75 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Default: not using wrapper
-          echo "using_wrapper=false" >> $GITHUB_OUTPUT
+          echo "gradle_cmd=" >> $GITHUB_OUTPUT   # default empty
 
+          # If repository has a gradlew script, check wrapper JAR for validity
           if [ -f ./gradlew ]; then
             echo "Found gradlew script in repo."
             chmod +x ./gradlew || true
 
-            # Check wrapper jar exists and has the expected Main-Class
             if [ -f ./gradle/wrapper/gradle-wrapper.jar ]; then
-              echo "Found gradle/wrapper/gradle-wrapper.jar — checking manifest..."
+              echo "Found gradle/wrapper/gradle-wrapper.jar — checking manifest for GradleWrapperMain..."
               if unzip -p ./gradle/wrapper/gradle-wrapper.jar META-INF/MANIFEST.MF 2>/dev/null | grep -q "GradleWrapperMain"; then
-                echo "gradle-wrapper.jar appears valid — using project wrapper."
-                echo "using_wrapper=true" >> $GITHUB_OUTPUT
+                echo "Using project wrapper (gradlew)."
+                echo "gradle_cmd=./gradlew" >> $GITHUB_OUTPUT
+                exit 0
               else
-                echo "gradle-wrapper.jar is present but does not contain GradleWrapperMain (broken)."
-                echo "It will be ignored and workflow will download a Gradle distribution."
+                echo "gradle-wrapper.jar is present but invalid; it will be ignored."
               fi
             else
-              echo "gradle-wrapper.jar not found under gradle/wrapper — will download Gradle distribution."
+              echo "gradle-wrapper.jar not found under gradle/wrapper; ignoring project wrapper."
             fi
           else
-            echo "No gradlew script found in repo — will download Gradle distribution."
+            echo "No gradlew script found in repo."
           fi
 
-          # If wrapper not usable, download Gradle distribution and add to PATH
-          if [ "${{ steps.prepare_gradle.outcome || '' }}" = "skipped" ]; then
-            # no-op, kept for safety
-            :
-          fi
+          # If we get here, wrapper is not usable — download Gradle and use its gradle executable explicitly
+          echo "Downloading Gradle ${GRADLE_VERSION}..."
+          curl -sLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          unzip -q gradle.zip
+          mv "gradle-${GRADLE_VERSION}" gradle
+          ls -la gradle/bin || true
+          chmod +x gradle/bin/gradle || true
 
-          # read output variable to decide (we use a file read because $GITHUB_OUTPUT was just appended)
-          USING_WRAPPER=$(cat $GITHUB_OUTPUT | awk -F= '/^using_wrapper=/{print $2}' | tail -n1 || true)
+          # Use the explicit path to the downloaded gradle, to avoid any preinstalled gradle on the runner
+          echo "gradle_cmd=./gradle/bin/gradle" >> $GITHUB_OUTPUT
+          echo "Downloaded Gradle and set gradle_cmd to ./gradle/bin/gradle"
 
-          if [ "$USING_WRAPPER" != "true" ]; then
-            echo "Downloading Gradle ${GRADLE_VERSION}..."
-            curl -sLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
-            unzip -q gradle.zip
-            mv "gradle-${GRADLE_VERSION}" gradle
-            ls -la gradle/bin || true
-            # ensure bin is on PATH
-            echo "$PWD/gradle/bin" >> $GITHUB_PATH
-            echo "Downloaded Gradle and added gradle/bin to PATH."
+      - name: Show which Gradle will be used (debug)
+        run: |
+          echo "prepare_gradle outputs:"
+          sed -n '1,200p' $GITHUB_OUTPUT || true
+          echo "Using gradle command: ${{ steps.prepare_gradle.outputs.gradle_cmd }}"
+          if [ -n "${{ steps.prepare_gradle.outputs.gradle_cmd }}" ]; then
+            ${{ steps.prepare_gradle.outputs.gradle_cmd }} --version || true
           fi
 
       - name: Build Release APK
         id: build_step
         run: |
           set -euo pipefail
-
-          # Determine which runner to use
-          USING_WRAPPER=false
-          if [ -f ./gradlew ]; then
-            # check earlier output if available (when step outputs are set, we can try to read them)
-            # Use environment fallback: check wrapper jar validity again
-            if [ -f ./gradle/wrapper/gradle-wrapper.jar ] && unzip -p ./gradle/wrapper/gradle-wrapper.jar META-INF/MANIFEST.MF 2>/dev/null | grep -q "GradleWrapperMain"; then
-              USING_WRAPPER=true
-            fi
+          if [ -z "${{ steps.prepare_gradle.outputs.gradle_cmd }}" ]; then
+            echo "No gradle command available; aborting."
+            exit 1
           fi
 
-          if [ "$USING_WRAPPER" = "true" ]; then
-            echo "Using project wrapper: ./gradlew assembleRelease"
-            chmod +x ./gradlew || true
-            ./gradlew assembleRelease --no-daemon
-          else
-            echo "Using downloaded Gradle: gradle assembleRelease"
-            # gradle should be on PATH from previous step
-            gradle assembleRelease --no-daemon
-          fi
+          GRADLE_CMD="${{ steps.prepare_gradle.outputs.gradle_cmd }}"
+          echo "Running: $GRADLE_CMD assembleRelease --no-daemon"
+          $GRADLE_CMD assembleRelease --no-daemon
 
       - name: Locate APK
         id: find_apk
         run: |
           set -euo pipefail
-
-          # prefer common module path if exists
           APK=$(find ./app/build/outputs -type f -name "*.apk" 2>/dev/null | grep -i "release" | head -n 1 || true)
-
-          # fallback to any release-named apk
           if [ -z "$APK" ]; then
             APK=$(find . -type f -name "*release*.apk" 2>/dev/null | head -n 1 || true)
           fi
-
           if [ -z "$APK" ]; then
             echo "No release APK found."
             exit 1
           fi
-
           echo "apk=$APK" >> $GITHUB_OUTPUT
           echo "Found APK: $APK"
 
