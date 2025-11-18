@@ -13,6 +13,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
@@ -23,6 +24,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private lateinit var webView: WebView
+    private lateinit var swipe: SwipeRefreshLayout
     private val startHost: String? by lazy {
         Uri.parse(START_URL).host
     }
@@ -31,7 +33,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        swipe = findViewById(R.id.swipe_refresh)
         webView = findViewById(R.id.webview)
+
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -48,6 +52,16 @@ class MainActivity : ComponentActivity() {
 
         webView.webChromeClient = WebChromeClient()
         webView.webViewClient = object : WebViewClient() {
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                swipe.isRefreshing = true
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                swipe.isRefreshing = false
+            }
 
             // Intercept requests to provide offline fallback when no network
             override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -93,6 +107,10 @@ class MainActivity : ComponentActivity() {
                 startActivity(intent)
                 return true
             }
+        }
+
+        swipe.setOnRefreshListener {
+            webView.reload()
         }
 
         if (savedInstanceState == null) {
