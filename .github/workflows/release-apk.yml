@@ -1,60 +1,115 @@
-name: Android Build
+name: Android Build (release APK)
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
   pull_request:
+
+env:
+  JAVA_VERSION: 17
+  ANDROID_API_LEVEL: 34
+  BUILD_TOOLS_VERSION: 34.0.0
+  GRADLE_VERSION: 8.1.1
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      JAVA_VERSION: 17
-      ANDROID_API_LEVEL: 34
-      BUILD_TOOLS_VERSION: 34.0.0
-      GRADLE_VERSION: 8.1.1
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    name: Build release APK
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Java
-      uses: actions/setup-java@v3
-      with:
-        distribution: temurin
-        java-version: ${{ env.JAVA_VERSION }}
+      - name: Ensure unzip & curl installed
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip curl
 
-    - name: Download and setup Gradle
-      run: |
-        curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
-        unzip -q gradle.zip
-        mv gradle-${GRADLE_VERSION} gradle
-        chmod +x gradle/bin/gradle
-        echo "$PWD/gradle/bin" >> $GITHUB_PATH
+      - name: Set up Java ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
 
-    - name: Set up Android SDK
-      uses: android-actions/setup-android@v2
-      with:
-        api-level: ${{ env.ANDROID_API_LEVEL }}
-        build-tools: ${{ env.BUILD_TOOLS_VERSION }}
-        ndk: false
-        emulator: false
+      - name: Set up Android SDK (API ${{ env.ANDROID_API_LEVEL }})
+        uses: android-actions/setup-android@v2
+        with:
+          api-level: ${{ env.ANDROID_API_LEVEL }}
+          build-tools: ${{ env.BUILD_TOOLS_VERSION }}
+          ndk: false
+          emulator: false
 
-    - name: Accept Android SDK licenses
-      run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+      - name: Accept Android SDK licenses
+        run: |
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
 
-    - name: Enable AndroidX in gradle.properties
-      run: |
-        echo "android.useAndroidX=true" >> gradle.properties
-        echo "android.enableJetifier=true" >> gradle.properties
+      - name: Ensure AndroidX flags in gradle.properties
+        run: |
+          # create file if not exists
+          if [ ! -f gradle.properties ]; then touch gradle.properties; fi
 
-    - name: Build Release APK
-      run: ./gradle/gradle/bin/gradle assembleRelease --no-daemon
+          # Add flags only if not already present
+          grep -qxF "android.useAndroidX=true" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
+          grep -qxF "android.enableJetifier=true" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
 
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-release-apk
-        path: app/build/outputs/apk/release/app-release.apk
+      - name: Prepare Gradle (use wrapper if present, otherwise download Gradle)
+        id: prepare_gradle
+        run: |
+          set -e
+
+          if [ -f ./gradlew ]; then
+            echo "using_wrapper=true" >> $GITHUB_OUTPUT
+            chmod +x ./gradlew
+            echo "Found gradlew in repo — will use project wrapper."
+            ls -la ./gradlew
+          else
+            echo "using_wrapper=false" >> $GITHUB_OUTPUT
+            echo "No gradlew found — downloading Gradle ${GRADLE_VERSION}..."
+            curl -sLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+            unzip -q gradle.zip
+            mv "gradle-${GRADLE_VERSION}" gradle
+            ls -la gradle/bin
+            chmod +x gradle/bin/gradle || true
+            echo "$PWD/gradle/bin" >> $GITHUB_PATH
+            echo "Gradle downloaded and added to PATH."
+          fi
+
+      - name: Build Release APK
+        id: build
+        run: |
+          set -e
+          if [ -f ./gradlew ]; then
+            echo "Running ./gradlew assembleRelease"
+            ./gradlew assembleRelease --no-daemon
+          else
+            echo "Running gradle assembleRelease (downloaded distribution)"
+            gradle assembleRelease --no-daemon
+          fi
+
+      - name: Locate APK
+        id: find_apk
+        run: |
+          set -e
+          # common app path first
+          APK=$(find ./app/build/outputs -type f -name "*.apk" | grep -i "release" | head -n 1 || true)
+
+          # fallback: any release-named apk
+          if [ -z "$APK" ]; then
+            APK=$(find . -type f -name "*release*.apk" | head -n 1 || true)
+          fi
+
+          if [ -z "$APK" ]; then
+            echo "No release APK found."
+            exit 1
+          fi
+
+          echo "apk=$APK" >> $GITHUB_OUTPUT
+          echo "Found APK: $APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: ${{ steps.find_apk.outputs.apk }}
