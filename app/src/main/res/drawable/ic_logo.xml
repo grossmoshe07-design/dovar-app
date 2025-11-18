@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="512dp"
+    android:height="512dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <!-- Background circle (maroon) -->
+    <path
+        android:fillColor="#7B1F1F"
+        android:pathData="M256,0A256,256 0 1,0 256,512A256,256 0 1,0 256,0z" />
+
+    <!-- Inner oval (white) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M130,300c35,-70 252,-70 287,0c-35,70 -252,70 -287,0z" />
+
+</vector>

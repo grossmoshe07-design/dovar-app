@@ -1,0 +1,9 @@
+<resources>
+
+    <style name="Theme.DovarWebView" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#7B1F1F</item>
+        <item name="colorPrimaryVariant">#5a1212</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+    </style>
+
+</resources>
