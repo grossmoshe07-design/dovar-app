@@ -2,8 +2,7 @@ name: Build Release APK
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -19,49 +18,149 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@v3
+      - name: Ensure curl & unzip installed
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl unzip
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Download Android SDK Command-line tools
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v2
         with:
           api-level: ${{ env.ANDROID_API_LEVEL }}
           build-tools: ${{ env.BUILD_TOOLS_VERSION }}
-          java-version: ${{ env.JAVA_VERSION }}
+          ndk: false
+          emulator: false
 
-      - name: Download Gradle
+      - name: Accept Android SDK licenses
+        run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
+
+      - name: Force google() + mavenCentral() on runner (CI safety)
         run: |
-          curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
-          unzip -q gradle.zip
-          mv gradle-${GRADLE_VERSION} gradle
-          chmod +x gradle/bin/gradle
-          echo "$PWD/gradle/bin" >> $GITHUB_PATH
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'INIT'
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+  }
+}
+INIT
 
-      - name: Ensure gradle is available
+      - name: Ensure AndroidX flags in gradle.properties
         run: |
-          ./gradle/bin/gradle --version
+          if [ ! -f gradle.properties ]; then
+            touch gradle.properties
+          fi
+          grep -qxF "android.useAndroidX=true" gradle.properties || echo "android.useAndroidX=true" >> gradle.properties
+          grep -qxF "android.enableJetifier=true" gradle.properties || echo "android.enableJetifier=true" >> gradle.properties
+          echo "AndroidX flags ensured."
 
-      - name: Set android.useAndroidX
-        run: echo "android.useAndroidX=true" >> gradle.properties
-
-      - name: Build release APK
+      - name: Prepare Gradle command (use wrapper if valid, otherwise download distribution)
+        id: prepare
         run: |
           set -euo pipefail
-          if [ -f ./gradlew ]; then
-            echo "Using ./gradlew"
-            ./gradlew assembleRelease --no-daemon
+
+          # prefer a valid project wrapper
+          if [ -f "./gradlew" ]; then
+            echo "Found ./gradlew"
+            chmod +x ./gradlew || true
+            if [ -f "./gradle/wrapper/gradle-wrapper.jar" ]; then
+              if unzip -p ./gradle/wrapper/gradle-wrapper.jar META-INF/MANIFEST.MF 2>/dev/null | grep -q "GradleWrapperMain"; then
+                echo "Using project wrapper ./gradlew"
+                echo "GRADLE_CMD=./gradlew" >> $GITHUB_ENV
+                exit 0
+              else
+                echo "Project wrapper JAR present but invalid. Will download Gradle distribution."
+              fi
+            else
+              echo "gradle-wrapper.jar not found; will download Gradle distribution."
+            fi
           else
-            echo "Using downloaded Gradle"
-            ./gradle/bin/gradle assembleRelease --no-daemon
+            echo "No ./gradlew in repo; will download Gradle distribution."
           fi
 
-      - name: Upload APK
+          # clean leftovers from previous runs (safe)
+          rm -rf gradle gradle-* gradle.zip || true
+
+          # download gradle zip
+          echo "Downloading Gradle ${GRADLE_VERSION}..."
+          curl -sLo gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+          if [ ! -f gradle.zip ]; then
+            echo "ERROR: gradle.zip not downloaded"
+            exit 1
+          fi
+
+          # unzip and detect extracted directory name robustly
+          unzip -q gradle.zip
+          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "gradle-*" -print | head -n 1 || true)
+          if [ -z "$EXTRACTED_DIR" ]; then
+            echo "ERROR: could not find extracted gradle directory"
+            ls -la
+            exit 1
+          fi
+          echo "Extracted Gradle folder: $EXTRACTED_DIR"
+
+          # move it to ./gradle (so path is predictable)
+          mv "$EXTRACTED_DIR" gradle
+
+          # ensure gradle executable exists
+          if [ ! -f "gradle/bin/gradle" ]; then
+            echo "ERROR: gradle/bin/gradle not found inside downloaded distribution!"
+            ls -la gradle || true
+            exit 1
+          fi
+          chmod +x gradle/bin/gradle || true
+
+          # export explicit gradle command so we avoid any runner-installed gradle
+          echo "GRADLE_CMD=./gradle/bin/gradle" >> $GITHUB_ENV
+          echo "Downloaded Gradle and set GRADLE_CMD=./gradle/bin/gradle"
+
+      - name: Show chosen Gradle & version
+        run: |
+          echo "Using GRADLE_CMD=${GRADLE_CMD:-<not-set>}"
+          if [ -n "${GRADLE_CMD:-}" ]; then
+            $GRADLE_CMD --version || true
+          fi
+
+      - name: Build Release APK
+        run: |
+          set -euo pipefail
+          if [ -n "${GRADLE_CMD:-}" ] && [ "${GRADLE_CMD}" = "./gradlew" ]; then
+            echo "Running project wrapper: ./gradlew assembleRelease"
+            ./gradlew assembleRelease --no-daemon
+          elif [ -n "${GRADLE_CMD:-}" ]; then
+            echo "Running downloaded Gradle: ${GRADLE_CMD} assembleRelease"
+            ${GRADLE_CMD} assembleRelease --no-daemon
+          else
+            echo "ERROR: no Gradle command available"
+            exit 1
+          fi
+
+      - name: Locate APK
+        id: find_apk
+        run: |
+          set -euo pipefail
+          APK=$(find ./app/build/outputs -type f -name "*.apk" 2>/dev/null | grep -i "release" | head -n 1 || true)
+          if [ -z "$APK" ]; then
+            APK=$(find . -type f -name "*release*.apk" 2>/dev/null | head -n 1 || true)
+          fi
+          if [ -z "$APK" ]; then
+            echo "ERROR: No release APK found."
+            exit 1
+          fi
+          echo "apk=$APK" >> $GITHUB_OUTPUT
+          echo "Found APK: $APK"
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          path: ${{ steps.find_apk.outputs.apk }}
