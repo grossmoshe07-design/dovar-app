@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Offline - dovar shalom</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body {font-family: sans-serif; text-align: center; padding: 2rem; background: #fff7f7; color: #4a1a1a;}
+    .logo {margin: 1rem auto; width: 160px; height: 160px; background-size: contain; background-repeat: no-repeat;}
+    h1 {margin-top: 0.5rem;}
+    p {color: #333;}
+    button {background:#7B1F1F;color:#fff;border:0;padding:0.6rem 1rem;border-radius:6px;font-size:1rem}
+  </style>
+</head>
+<body>
+  <!-- To show your logo here, either:
+       - replace the data URL below with a base64 PNG of your logo, or
+       - place the PNG in assets/ and use <img src="logo.png"> instead. -->
+  <div class="logo" style="background-image: url('data:image/png;base64,');"></div>
+  <h1>You're offline</h1>
+  <p>It looks like you don't have an internet connection. Connect to the internet and press Retry to continue.</p>
+  <button onclick="retry()">Retry</button>
+
+  <script>
+    function retry() {
+      location.reload();
+    }
+  </script>
+</body>
+</html>
