@@ -10,6 +10,7 @@ env:
   ANDROID_API_LEVEL: '34'
   BUILD_TOOLS_VERSION: '34.0.0'
   ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+  FALLBACK_GRADLE_VERSION: '8.4.1'
 
 permissions:
   contents: read
@@ -31,25 +32,39 @@ jobs:
 
       - name: Ensure sdkmanager is available and install SDK components
         run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          # Add common sdkmanager locations to PATH (github-hosted runners typically have these)
           export PATH="$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/tools/bin:$ANDROID_SDK_ROOT/cmdline-tools/bin"
-          # If sdkmanager is still missing, list SDK_ROOT to aid debugging
           if ! command -v sdkmanager >/dev/null 2>&1; then
-            echo "sdkmanager not found on PATH. Listing likely SDK directories for debugging:"
+            echo "sdkmanager not found — listing $ANDROID_SDK_ROOT for debugging"
             ls -la $ANDROID_SDK_ROOT || true
-            echo "Attempting to use sdkmanager from available locations..."
           fi
-          # Accept licenses non-interactively and install required components
           yes | sdkmanager --licenses || true
-          sdkmanager --update
+          sdkmanager --update || true
           sdkmanager "platform-tools" "platforms;android-${{ env.ANDROID_API_LEVEL }}" "build-tools;${{ env.BUILD_TOOLS_VERSION }}" || true
 
-      - name: Make gradlew executable
-        run: chmod +x ./gradlew
+      - name: Make gradlew executable (if present)
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          else
+            echo "gradlew not found in repo; will use fallback Gradle distribution"
+          fi
 
-      - name: Assemble release APK
-        run: ./gradlew assembleRelease --no-daemon
+      - name: Build (use gradlew if present; otherwise download Gradle and use it)
+        run: |
+          set -e
+          if [ -x ./gradlew ]; then
+            echo "Using repository gradlew"
+            ./gradlew assembleRelease --no-daemon
+          else
+            GRADLE_VER="${FALLBACK_GRADLE_VERSION}"
+            DIST="gradle-${GRADLE_VER}-bin.zip"
+            URL="https://services.gradle.org/distributions/${DIST}"
+            mkdir -p /tmp/gradle-dist
+            echo "Downloading $URL"
+            curl -sSL "$URL" -o /tmp/gradle-dist/$DIST
+            unzip -q /tmp/gradle-dist/$DIST -d /tmp/gradle-dist
+            /tmp/gradle-dist/gradle-${GRADLE_VER}/bin/gradle --no-daemon assembleRelease
+          fi
 
       - name: Locate APK
         id: find_apk
