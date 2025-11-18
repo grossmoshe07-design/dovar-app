@@ -8,15 +8,19 @@ on:
 
 jobs:
   build:
+    name: Build Release APK
     runs-on: ubuntu-latest
+
     env:
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-      JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/17.0.17-10/x64
       JAVA_VERSION: 17
+      ANDROID_API_LEVEL: 34
+      BUILD_TOOLS_VERSION: 34.0.0
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      GRADLE_VERSION: 8.1.1
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v3
@@ -24,32 +28,32 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android SDK Command-line Tools
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v2
         with:
-          api-level: 34
-          build-tools: 34.0.0
+          api-level: ${{ env.ANDROID_API_LEVEL }}
+          build-tools: ${{ env.BUILD_TOOLS_VERSION }}
 
-      - name: Ensure Gradle wrapper exists
+      - name: Download Gradle Wrapper
         run: |
-          if [ ! -f ./gradlew ]; then
-            echo "Gradle wrapper missing, generating..."
-            sudo apt-get update
-            sudo apt-get install -y wget unzip
-            wget https://services.gradle.org/distributions/gradle-8.1.1-bin.zip
-            unzip gradle-8.1.1-bin.zip -d $HOME/gradle
-            echo "$HOME/gradle/gradle-8.1.1/bin" >> $GITHUB_PATH
-            gradle wrapper --gradle-version 8.1.1
-          fi
+          curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${{ env.GRADLE_VERSION }}-bin.zip
+          unzip -q gradle.zip
+          mv gradle-${{ env.GRADLE_VERSION }} gradle
+          chmod +x gradle/bin/gradle
+          echo "$PWD/gradle/bin" >> $GITHUB_PATH
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x ./gradlew
+      - name: Build release APK
+        run: gradle assembleRelease --no-daemon
 
-      - name: Build APK (Release)
-        run: ./gradlew assembleRelease --no-daemon
+      - name: Find APK
+        id: find_apk
+        run: |
+          APK=$(find $PWD -name "*.apk" | grep "release" | head -n 1)
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
+          echo "APK found at $APK"
 
       - name: Upload APK
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: dovar-apk
+          path: ${{ env.APK_PATH }}
