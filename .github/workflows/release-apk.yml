@@ -50,13 +50,13 @@ jobs:
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'INIT'
-allprojects {
-  repositories {
-    google()
-    mavenCentral()
-  }
-}
-INIT
+          allprojects {
+            repositories {
+              google()
+              mavenCentral()
+            }
+          }
+          INIT
           echo "Wrote ~/.gradle/init.gradle to force google() + mavenCentral() on runner."
 
       - name: Ensure AndroidX flags in gradle.properties
@@ -136,12 +136,13 @@ INIT
       - name: Debug: Show chosen gradle_cmd and version
         run: |
           echo "prepare_gradle outputs:"
-          sed -n '1,200p' $GITHUB_OUTPUT || true
+          cat $GITHUB_OUTPUT || true
           echo "Using gradle command: ${{ steps.prepare_gradle.outputs.gradle_cmd }}"
           if [ -n "${{ steps.prepare_gradle.outputs.gradle_cmd }}" ]; then
             # print version of the chosen gradle binary (won't fail the job)
-            ${ { steps.prepare_gradle.outputs.gradle_cmd }:-echo } --version || true
+            "${{ steps.prepare_gradle.outputs.gradle_cmd }}" --version || true
           fi
+
 
       - name: Build Release APK
         id: build_step
