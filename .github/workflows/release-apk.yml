@@ -4,55 +4,57 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  pull_request:
 
 jobs:
   build:
-    name: Build Release APK
     runs-on: ubuntu-latest
-
     env:
       JAVA_VERSION: 17
       ANDROID_API_LEVEL: 34
       BUILD_TOOLS_VERSION: 34.0.0
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       GRADLE_VERSION: 8.1.1
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          distribution: temurin
-          java-version: 17
+    - name: Set up Java
+      uses: actions/setup-java@v3
+      with:
+        distribution: temurin
+        java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v2
-        with:
-          api-level: ${{ env.ANDROID_API_LEVEL }}
-          build-tools: ${{ env.BUILD_TOOLS_VERSION }}
+    - name: Download and setup Gradle
+      run: |
+        curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
+        unzip -q gradle.zip
+        mv gradle-${GRADLE_VERSION} gradle
+        chmod +x gradle/bin/gradle
+        echo "$PWD/gradle/bin" >> $GITHUB_PATH
 
-      - name: Download Gradle
-        run: |
-          curl -sLo gradle.zip https://services.gradle.org/distributions/gradle-${{ env.GRADLE_VERSION }}-bin.zip
-          unzip -q gradle.zip
-          echo "$PWD/gradle-${{ env.GRADLE_VERSION }}/bin" >> $GITHUB_PATH
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v2
+      with:
+        api-level: ${{ env.ANDROID_API_LEVEL }}
+        build-tools: ${{ env.BUILD_TOOLS_VERSION }}
+        ndk: false
+        emulator: false
 
+    - name: Accept Android SDK licenses
+      run: yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
 
-      - name: Build release APK
-        run: gradle assembleRelease --no-daemon
+    - name: Enable AndroidX in gradle.properties
+      run: |
+        echo "android.useAndroidX=true" >> gradle.properties
+        echo "android.enableJetifier=true" >> gradle.properties
 
-      - name: Find APK
-        id: find_apk
-        run: |
-          APK=$(find $PWD -name "*.apk" | grep "release" | head -n 1)
-          echo "APK_PATH=$APK" >> $GITHUB_ENV
-          echo "APK found at $APK"
+    - name: Build Release APK
+      run: ./gradle/gradle/bin/gradle assembleRelease --no-daemon
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: dovar-apk
-          path: ${{ env.APK_PATH }}
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: app-release-apk
+        path: app/build/outputs/apk/release/app-release.apk
