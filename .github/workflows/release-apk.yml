@@ -49,13 +49,13 @@ jobs:
         run: |
           mkdir -p ~/.gradle
           cat > ~/.gradle/init.gradle <<'INIT'
-allprojects {
-  repositories {
-    google()
-    mavenCentral()
-  }
-}
-INIT
+          allprojects {
+            repositories {
+              google()
+              mavenCentral()
+            }
+          }
+          INIT
 
       - name: Ensure AndroidX flags in gradle.properties
         run: |
